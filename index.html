@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#eef0ee">
+<title>My Metro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@600&display=swap">
+<style>
+/* Layout: tabs over one column of station boards. Light theme: cool paper ground, white boards, Metro-brown accent */
+:root{
+  --bg:#eef0ee; --panel:#ffffff; --line:#d9ddd9; --fg:#1b1f1e; --muted:#66706c;
+  --amber:#3d2b25; --accent:#3d2b25; --danger:#b3261e; --live:#b4540a; --hi:#f6f3ea;
+  --RD:#BF0D3E; --OR:#ED8B00; --BL:#009CDE; --YL:#FFD100; --GR:#00B140; --SV:#919D9D;
+  --sans:"Overpass",-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:"Overpass Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-text-size-adjust:100%}
+body{padding:env(safe-area-inset-top,0) max(16px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+[hidden]{display:none!important}
+button,select{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header{display:flex;align-items:center;gap:10px;padding:14px 0 10px}
+.logo{width:30px;height:30px;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center;font-weight:800;font-size:20px;line-height:1;padding-top:3px}
+h1{font-size:20px;margin:0;font-weight:800;letter-spacing:.01em;flex:1}
+#updated{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.btn{padding:8px 12px;border-radius:8px;border:1px solid var(--line);font-size:14px;font-weight:600}
+.btn{background:var(--panel)}
+.btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.iconbtn{background:var(--panel)}
+.iconbtn{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:17px}
+
+nav.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:0 0 10px}
+nav.tabs button{padding:9px 4px 7px;border-radius:8px;font-size:14px;font-weight:600;color:var(--muted);border:1px solid transparent}
+nav.tabs button[aria-selected=true]{color:var(--fg);background:var(--panel);border-color:var(--line);box-shadow:inset 0 -2px 0 var(--amber)}
+
+main{display:flex;flex-direction:column;gap:14px;padding-top:14px}
+#boards{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:8px;padding:12px 14px 10px}
+.card-h h2{margin:0;font-size:18px;font-weight:800;flex:1;min-width:0}
+.dots{display:flex;gap:4px}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.reorder{display:flex;gap:6px}
+.reorder .iconbtn{width:34px;height:34px}
+.reorder .rm{color:var(--danger)}
+.platform{border-top:1px solid var(--line);padding:6px 14px 8px}
+.plabel{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:4px 0 2px}
+.row{display:grid;grid-template-columns:30px 1fr auto 56px;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:0}
+.badge{width:28px;height:20px;border-radius:4px;font-size:11px;font-weight:800;display:inline-grid;place-items:center;color:#fff;padding-top:2px;flex:none}
+.badge.YL{color:#222}
+.dest{font-size:16px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cars{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.min{font-family:var(--mono);color:var(--fg);font-size:18px;text-align:right;font-variant-numeric:tabular-nums}
+.min.arr{color:var(--live)}
+.min small{font-size:11px;margin-left:2px}
+.empty,.msg{color:var(--muted);font-size:14px;padding:10px 14px 14px;line-height:1.4}
+.msg.err{color:var(--danger)}
+
+/* Commute board */
+.commute .card-h{align-items:flex-start;padding-bottom:12px}
+.commute .hd{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.eyebrow b{color:var(--live);font-weight:600}
+.sub{display:flex;align-items:center;gap:8px;font-size:15px;color:var(--fg)}
+.trains{border-top:1px solid var(--line);padding:2px 14px 6px}
+.trains .row:first-child{background:var(--hi);margin:0 -14px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.trains .row:first-child .dest{font-size:18px;font-weight:800}
+.trains .row:first-child .min{font-size:26px}
+
+section.sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.sheet h3{margin:0;font-size:15px;font-weight:800}
+.sheet p{margin:0;font-size:14px;color:var(--muted);line-height:1.45}
+.sheet a{color:var(--accent)}
+input[type=text],input[type=search],input[type=time],select{width:100%;font-size:16px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:inherit}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;min-width:0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stationlist{max-height:50vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+.sitem{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);font-size:15px}
+.sitem:last-child{border-bottom:0}
+.sitem .nm{flex:1;min-width:0}
+.star{font-size:20px;color:var(--muted)}
+.sitem.fav .star{color:var(--amber)}
+.hint{font-size:12px;color:var(--muted)}
+.min.arr{font-weight:600}
+</style>
+</head>
+<body>
+<div class="top">
+  <header>
+    <div class="logo" aria-hidden="true">M</div>
+    <h1>My Metro</h1>
+    <span id="updated"></span>
+    <button class="iconbtn" id="refreshBtn" aria-label="Refresh">↻</button>
+    <button class="btn" id="editBtn">Edit</button>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="morning" id="tab-morning">Morning</button>
+    <button role="tab" data-tab="evening" id="tab-evening">Evening</button>
+    <button role="tab" data-tab="favorites" id="tab-favorites">Favorites</button>
+  </nav>
+</div>
+
+<main>
+  <section class="sheet" id="keySheet" hidden>
+    <h3>WMATA API key</h3>
+    <p>Arrival times come from WMATA's free developer API. Sign up at <a href="https://developer.wmata.com/" target="_blank" rel="noopener">developer.wmata.com</a>, subscribe to the "Default Tier" product, and paste your primary key here. It stays on this phone.</p>
+    <input type="text" id="keyInput" placeholder="Paste your key" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="btn on" id="saveKey">Save key</button>
+  </section>
+
+  <section class="sheet" id="commuteSheet" hidden></section>
+
+  <section class="sheet" id="favSheet" hidden>
+    <h3>Favorite stations</h3>
+    <p class="hint">Tap the star to add or remove a favorite. Use the arrows on each board below to change the order.</p>
+    <input type="search" id="search" placeholder="Search stations">
+    <div class="stationlist" id="stationList"></div>
+  </section>
+
+  <section class="sheet" id="keyLink" hidden>
+    <button class="btn" id="changeKey">Change API key</button>
+  </section>
+
+  <div id="boards"></div>
+</main>
+
+<script>
+const API = "https://api.wmata.com";
+const REFRESH_MS = 20000;
+const LINE_NAMES = {RD:"Red",OR:"Orange",BL:"Blue",YL:"Yellow",GR:"Green",SV:"Silver"};
+// Direction choices per line: end-of-line station codes plus name keywords (keywords also catch trains that end early)
+const TOWARD = {
+  BL:[{label:"Downtown Largo",codes:["G05"],kw:["largo"]},{label:"Franconia-Springfield",codes:["J03"],kw:["franconia"]}],
+  SV:[{label:"Downtown Largo / New Carrollton",codes:["G05","D13"],kw:["largo","carrollton"]},{label:"Ashburn",codes:["N12"],kw:["ashburn"]}],
+  OR:[{label:"New Carrollton",codes:["D13"],kw:["carrollton"]},{label:"Vienna",codes:["K08"],kw:["vienna"]}],
+  RD:[{label:"Glenmont",codes:["B11"],kw:["glenmont"]},{label:"Shady Grove",codes:["A15"],kw:["shady"]}],
+  YL:[{label:"Mt Vernon Sq / Greenbelt",codes:["E01","E10"],kw:["vernon","greenbelt"]},{label:"Huntington",codes:["C15"],kw:["huntington"]}],
+  GR:[{label:"Greenbelt",codes:["E10"],kw:["greenbelt"]},{label:"Branch Ave",codes:["F11"],kw:["branch"]}]
+};
+const DEFAULT_COMMUTES = {
+  morning:{ station:{name:"Braddock Road",codes:["C12"],lines:["BL","YL"]}, line:"BL", toward:0, start:"07:30", end:"09:30" },
+  evening:{ station:{name:"Farragut West",codes:["C03"],lines:["BL","OR","SV"]}, line:"BL", toward:1, start:"16:00", end:"18:00" }
+};
+
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch{ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
+};
+
+let apiKey = store.get("wm_key", "");
+let favs = store.get("wm_favs", [{ name: "Braddock Road", codes: ["C12"], lines: ["BL","YL"] }]);
+let commutes = Object.assign(structuredClone(DEFAULT_COMMUTES), store.get("wm_commutes", {}));
+let stations = store.get("wm_stations", null);
+let tab = "favorites";
+let editing = false;
+let lastData = null, lastTime = null, timer = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const saveCommutes = () => store.set("wm_commutes", commutes);
+const toMin = hhmm => { const [h,m] = hhmm.split(":").map(Number); return h*60+m; };
+const fmtTime = hhmm => { let [h,m] = hhmm.split(":").map(Number); const ap = h>=12?"PM":"AM"; h = h%12||12; return `${h}:${String(m).padStart(2,"0")} ${ap}`; };
+const nowMin = () => { const d = new Date(); return d.getHours()*60+d.getMinutes(); };
+const inWindow = (c, lead=0) => { const n = nowMin(); return n >= toMin(c.start)-lead && n <= toMin(c.end); };
+
+async function api(path){
+  const sep = path.includes("?") ? "&" : "?";
+  const r = await fetch(`${API}${path}${sep}api_key=${encodeURIComponent(apiKey)}`);
+  if (r.status === 401 || r.status === 403) throw new Error("WMATA rejected the API key. Check it under Edit → Change API key.");
+  if (r.status === 429) throw new Error("Too many requests. Trying again shortly.");
+  if (!r.ok) throw new Error(`WMATA returned an error (${r.status}).`);
+  return r.json();
+}
+
+// Merge transfer stations (e.g. Metro Center A01 + C01) into one entry
+async function loadStations(){
+  if (stations && stations.length) return stations;
+  const data = await api("/Rail.svc/json/jStations");
+  const byName = new Map();
+  for (const s of data.Stations){
+    const e = byName.get(s.Name) || { name: s.Name, codes: [], lines: [] };
+    e.codes.push(s.Code);
+    for (const l of [s.LineCode1,s.LineCode2,s.LineCode3,s.LineCode4]) if (l && !e.lines.includes(l)) e.lines.push(l);
+    byName.set(s.Name, e);
+  }
+  stations = [...byName.values()].sort((a,b)=>a.name.localeCompare(b.name));
+  store.set("wm_stations", stations);
+  const match = f => stations.find(s => s.codes.some(c => f.codes.includes(c))) || f;
+  favs = favs.map(match); store.set("wm_favs", favs);
+  for (const k in commutes) commutes[k].station = match(commutes[k].station);
+  saveCommutes();
+  return stations;
+}
+
+const minSort = m => m === "BRD" ? -1 : m === "ARR" ? 0 : isNaN(+m) || m === "" ? 999 : +m;
+const minHTML = (m, cls="min") => (m==="ARR"||m==="BRD") ? `<span class="${cls} arr">${m}</span>`
+  : (m===""||m==="---"||m==null) ? `<span class="${cls}">—</span>` : `<span class="${cls}">${esc(m)}<small>min</small></span>`;
+const isRevenue = t => t.Line && t.Line !== "--" && t.Line !== "No";
+
+function rowHTML(t){
+  return `<div class="row">
+    <span class="badge ${esc(t.Line)}" style="background:var(--${esc(t.Line)},#555)">${esc(t.Line)}</span>
+    <span class="dest">${esc(t.Destination)}</span>
+    <span class="cars">${t.Car && t.Car!=="-" ? esc(t.Car)+" car" : ""}</span>
+    ${minHTML(t.Min)}</div>`;
+}
+
+// ----- Commute filtering -----
+// A platform side (LocationCode|Group) counts as "toward X" if any train there is headed to X.
+// That catches trains ending early. The side is remembered in case no X-bound train is listed right now.
+function commuteTrains(c, trains){
+  const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) return [];
+  const here = trains.filter(t => c.station.codes.includes(t.LocationCode) && isRevenue(t));
+  const hit = t => opt.codes.includes(t.DestinationCode) || opt.kw.some(w => `${t.DestinationName||""} ${t.Destination||""}`.toLowerCase().includes(w));
+  const sides = new Set(here.filter(hit).map(t => t.LocationCode+"|"+t.Group));
+  if (sides.size){ const g = [...sides][0]; if (c.side !== g){ c.side = g; saveCommutes(); } }
+  else if (c.side) sides.add(c.side);
+  return here.filter(t => t.Line === c.line && (hit(t) || sides.has(t.LocationCode+"|"+t.Group)))
+             .sort((a,b)=>minSort(a.Min)-minSort(b.Min));
+}
+
+function commuteHTML(key){
+  const c = commutes[key];
+  const opt = (TOWARD[c.line]||[])[c.toward] || {label:"?"};
+  const lineName = LINE_NAMES[c.line] || c.line;
+  const live = inWindow(c);
+  const head = `<div class="card-h"><div class="hd">
+      <h2>${esc(c.station.name)}</h2>
+      <div class="sub"><span class="badge ${c.line}" style="background:var(--${c.line})">${c.line}</span>${lineName} Line toward ${esc(opt.label)}</div>
+    </div>${editing ? "" : `<button class="btn" data-act="change">Change</button>`}</div>`;
+  let body;
+  if (!apiKey) body = `<div class="msg">Add your API key to see arrivals.</div>`;
+  else if (lastData?.error) body = `<div class="msg err">${esc(lastData.error)}</div>`;
+  else if (!lastData) body = `<div class="msg">Loading arrivals…</div>`;
+  else {
+    const list = commuteTrains(c, lastData.trains);
+    if (!list.length) body = `<div class="msg">No ${lineName} Line trains toward ${esc(opt.label)} predicted right now.</div>`;
+    else body = `<div class="trains">${list.map(rowHTML).join("")}</div>`;
+  }
+  return `<div class="card commute">${head}${body}</div>`;
+}
+
+function commuteEditHTML(key){
+  const c = commutes[key];
+  const stOpts = stations
+    ? stations.map(s => `<option value="${s.codes.join(",")}" ${s.codes.some(x=>c.station.codes.includes(x))?"selected":""}>${esc(s.name)}</option>`).join("")
+    : `<option>${esc(c.station.name)}</option>`;
+  const lines = (c.station.lines||[]).length ? c.station.lines : Object.keys(LINE_NAMES);
+  return `<h3>${key==="morning"?"Morning":"Evening"} commute</h3>
+    <label class="f">Station<select id="cmStation" ${stations?"":"disabled"}>${stOpts}</select></label>
+    <div class="two">
+      <label class="f">Line<select id="cmLine">${lines.map(l=>`<option value="${l}" ${l===c.line?"selected":""}>${LINE_NAMES[l]||l}</option>`).join("")}</select></label>
+      <label class="f">Toward<select id="cmToward">${(TOWARD[c.line]||[]).map((o,i)=>`<option value="${i}" ${i===c.toward?"selected":""}>${esc(o.label)}</option>`).join("")}</select></label>
+    </div>
+    <h3 style="margin-top:6px">Open to this tab</h3>
+    <div class="two">
+      <label class="f">From<input type="time" id="cmStart" value="${c.start}"></label>
+      <label class="f">Until<input type="time" id="cmEnd" value="${c.end}"></label>
+    </div>
+    <p class="hint">Between these times (starting an hour early), the app opens straight to ${key==="morning"?"Morning":"Evening"}. It doesn't limit which trains you see.</p>`;
+}
+
+function favBoardHTML(f, i){
+  const dots = (f.lines||[]).map(l=>`<span class="dot" style="background:var(--${l})" title="${LINE_NAMES[l]||l}"></span>`).join("");
+  const ctrl = editing ? `<div class="reorder">
+      <button class="iconbtn" data-act="up" data-i="${i}" aria-label="Move up" ${i===0?"disabled style='opacity:.3'":""}>↑</button>
+      <button class="iconbtn" data-act="down" data-i="${i}" aria-label="Move down" ${i===favs.length-1?"disabled style='opacity:.3'":""}>↓</button>
+      <button class="iconbtn rm" data-act="rm" data-i="${i}" aria-label="Remove">✕</button></div>` : `<div class="dots">${dots}</div>`;
+  return `<div class="card"><div class="card-h"><h2>${esc(f.name)}</h2>${ctrl}</div>${editing ? "" : platformsHTML(f)}</div>`;
+}
+
+function platformsHTML(f){
+  if (!apiKey) return `<div class="msg">Add your API key to see arrivals.</div>`;
+  if (lastData?.error) return `<div class="msg err">${esc(lastData.error)}</div>`;
+  if (!lastData) return `<div class="msg">Loading arrivals…</div>`;
+  const trains = lastData.trains.filter(t => f.codes.includes(t.LocationCode) && isRevenue(t));
+  if (!trains.length) return `<div class="msg">No trains predicted right now.</div>`;
+  const groups = {};
+  for (const t of trains) (groups[t.LocationCode + "|" + t.Group] ||= []).push(t);
+  return Object.values(groups).map(list => {
+    list.sort((a,b)=>minSort(a.Min)-minSort(b.Min));
+    const dests = [...new Set(list.map(t=>t.Destination))].join(" · ");
+    return `<div class="platform"><div class="plabel">Toward ${esc(dests)}</div>${list.slice(0,4).map(rowHTML).join("")}</div>`;
+  }).join("");
+}
+
+function render(){
+  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  const isCommute = tab !== "favorites";
+  $("favSheet").hidden = !(editing && !isCommute);
+  $("commuteSheet").hidden = !(editing && isCommute);
+  $("keyLink").hidden = !editing;
+  if (editing && isCommute) $("commuteSheet").innerHTML = commuteEditHTML(tab);
+  if (editing && !isCommute) renderStationList();
+  const box = $("boards");
+  if (isCommute) box.innerHTML = commuteHTML(tab);
+  else box.innerHTML = favs.length ? favs.map(favBoardHTML).join("")
+    : `<div class="card"><div class="empty">No favorite stations yet. Tap Edit to add some.</div></div>`;
+}
+
+function renderStationList(){
+  if (!stations){ $("stationList").innerHTML = `<div class="msg">Loading station list…</div>`; return; }
+  const q = $("search").value.trim().toLowerCase();
+  const list = stations.filter(s => !q || s.name.toLowerCase().includes(q));
+  $("stationList").innerHTML = list.map(s => {
+    const on = favs.some(f => f.codes.some(c => s.codes.includes(c)));
+    const dots = s.lines.map(l=>`<span class="dot" style="background:var(--${l})"></span>`).join("");
+    return `<button class="sitem ${on?"fav":""}" data-codes="${s.codes.join(",")}"><span class="nm">${esc(s.name)}</span><span class="dots">${dots}</span><span class="star">${on?"★":"☆"}</span></button>`;
+  }).join("") || `<div class="msg">No stations match.</div>`;
+}
+
+async function refresh(){
+  if (!apiKey) { render(); return; }
+  const codes = [...new Set([...favs.flatMap(f=>f.codes), ...Object.values(commutes).flatMap(c=>c.station.codes)])].join(",");
+  try{
+    const d = await api(`/StationPrediction.svc/json/GetPrediction/${codes}`);
+    lastData = { trains: d.Trains || [] };
+    lastTime = Date.now();
+  }catch(e){
+    lastData = { error: /fetch|network/i.test(e.message) ? "Can't reach WMATA. Check your connection." : e.message };
+  }
+  render(); tick();
+}
+
+function tick(){
+  if (!lastTime) { $("updated").textContent = ""; return; }
+  const s = Math.round((Date.now()-lastTime)/1000);
+  $("updated").textContent = s < 5 ? "just now" : `${s}s ago`;
+}
+
+function pickDefaultTab(){
+  const h = location.hash.slice(1);
+  if (["morning","evening","favorites"].includes(h)) return h;
+  if (inWindow(commutes.morning, 60)) return "morning";
+  if (inWindow(commutes.evening, 60)) return "evening";
+  return "favorites";
+}
+
+function setTab(t){
+  tab = t;
+  render();
+  refresh();
+}
+
+// ----- Events -----
+document.querySelector("nav.tabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-tab]"); if (b && b.dataset.tab !== tab) setTab(b.dataset.tab);
+});
+window.addEventListener("hashchange", () => { const t = pickDefaultTab(); if (t !== tab) setTab(t); });
+
+$("boards").addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  if (b.dataset.act === "change"){ $("editBtn").click(); window.scrollTo(0,0); return; }
+  const i = +b.dataset.i;
+  if (b.dataset.act==="up" && i>0) [favs[i-1],favs[i]] = [favs[i],favs[i-1]];
+  if (b.dataset.act==="down" && i<favs.length-1) [favs[i+1],favs[i]] = [favs[i],favs[i+1]];
+  if (b.dataset.act==="rm") favs.splice(i,1);
+  store.set("wm_favs", favs); render();
+});
+$("stationList").addEventListener("click", e => {
+  const b = e.target.closest(".sitem"); if (!b) return;
+  const codes = b.dataset.codes.split(",");
+  const idx = favs.findIndex(f => f.codes.some(c => codes.includes(c)));
+  if (idx >= 0) favs.splice(idx,1);
+  else favs.push(stations.find(s => s.codes.join(",")===b.dataset.codes));
+  store.set("wm_favs", favs); render();
+});
+$("search").addEventListener("input", renderStationList);
+
+$("commuteSheet").addEventListener("change", e => {
+  const c = commutes[tab];
+  if (e.target.id === "cmStation"){
+    c.station = stations.find(s => s.codes.join(",") === e.target.value) || c.station;
+    if (!c.station.lines.includes(c.line)) { c.line = c.station.lines[0]; c.toward = 0; }
+    delete c.side;
+  }
+  if (e.target.id === "cmLine"){ c.line = e.target.value; c.toward = 0; delete c.side; }
+  if (e.target.id === "cmToward"){ c.toward = +e.target.value; delete c.side; }
+  if (e.target.id === "cmStart" && e.target.value) c.start = e.target.value;
+  if (e.target.id === "cmEnd" && e.target.value) c.end = e.target.value;
+  saveCommutes(); render();
+});
+
+$("editBtn").addEventListener("click", async () => {
+  editing = !editing;
+  $("editBtn").textContent = editing ? "Done" : "Edit";
+  $("editBtn").classList.toggle("on", editing);
+  render();
+  if (editing){
+    try{ await loadStations(); render(); }
+    catch(e){ $("stationList").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  } else { $("search").value = ""; refresh(); }
+});
+$("changeKey").addEventListener("click", () => { $("keyInput").value = apiKey; $("keySheet").hidden = false; $("keyInput").focus(); });
+$("saveKey").addEventListener("click", () => {
+  apiKey = $("keyInput").value.trim();
+  store.set("wm_key", apiKey);
+  $("keySheet").hidden = !!apiKey;
+  lastData = null;
+  if (editing) $("editBtn").click(); else refresh();
+  loadStations().catch(()=>{});
+});
+$("refreshBtn").addEventListener("click", refresh);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refresh();
+});
+setInterval(tick, 1000);
+setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+
+// ----- Boot -----
+$("keySheet").hidden = !!apiKey;
+tab = pickDefaultTab();
+render();
+if (apiKey){ refresh(); loadStations().catch(()=>{}); }
+</script>
+</body>
+</html>
