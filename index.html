@@ -62,6 +62,8 @@ main{display:flex;flex-direction:column;gap:14px;padding-top:14px}
 .cars{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .min{font-family:var(--mono);color:var(--fg);font-size:18px;text-align:right;font-variant-numeric:tabular-nums}
 .min.arr{color:var(--live)}
+.row.est .dest,.row.est .min{color:var(--muted);font-weight:400}
+.row.est .badge{opacity:.55}
 .min small{font-size:11px;margin-left:2px}
 .empty,.msg{color:var(--muted);font-size:14px;padding:10px 14px 14px;line-height:1.4}
 .msg.err{color:var(--danger)}
@@ -206,27 +208,109 @@ const minSort = m => m === "BRD" ? -1 : m === "ARR" ? 0 : isNaN(+m) || m === "" 
 const minHTML = (m, cls="min") => (m==="ARR"||m==="BRD") ? `<span class="${cls} arr">${m}</span>`
   : (m===""||m==="---"||m==null) ? `<span class="${cls}">—</span>` : `<span class="${cls}">${esc(m)}<small>min</small></span>`;
 const isRevenue = t => t.Line && t.Line !== "--" && t.Line !== "No";
+const ROUTE_TO_LINE = {BLUE:"BL",YELLOW:"YL",ORANGE:"OR",SILVER:"SV",RED:"RD",GREEN:"GR"};
+const stationName = code => (stations||[]).find(s => s.codes.includes(code))?.name || "";
+const MAX_MIN = 90;
 
 function rowHTML(t){
-  return `<div class="row">
-    <span class="badge ${esc(t.Line)}" style="background:var(--${esc(t.Line)},#555)">${esc(t.Line)}</span>
-    <span class="dest">${esc(t.Destination)}</span>
-    <span class="cars">${t.Car && t.Car!=="-" ? esc(t.Car)+" car" : ""}</span>
-    ${minHTML(t.Min)}</div>`;
+  return `<div class="row${t.est?" est":""}">
+    <span class="badge ${esc(t.line)}" style="background:var(--${esc(t.line)},#555)">${esc(t.line)}</span>
+    <span class="dest">${esc(t.dest)}</span>
+    <span class="cars">${t.cars ? esc(t.cars)+" car" : ""}</span>
+    ${minHTML(t.minText)}</div>`;
+}
+const estNote = list => list.some(t => t.est)
+  ? `<div class="msg">Gray times come from WMATA's longer-range feed, beyond what the station sign shows.</div>` : "";
+
+// ----- GTFS-Realtime (protobuf) decoder: just the fields we need -----
+function pbFields(b, start=0, end=b.length){
+  const out = []; let i = start;
+  const varint = () => { let n = 0, m = 1, c; do { c = b[i++]; n += (c & 0x7f) * m; m *= 128; } while (c & 0x80); return n; };
+  while (i < end){
+    const key = varint(), f = Math.floor(key / 8), w = key & 7;
+    if (w === 0) out.push([f, varint()]);
+    else if (w === 2){ const len = varint(); out.push([f, [i, i+len]]); i += len; }
+    else if (w === 1) i += 8; else if (w === 5) i += 4; else break;
+  }
+  return out;
+}
+const pbGet = (b, r, num) => { const x = pbFields(b, r[0], r[1]).find(([f]) => f === num); return x ? x[1] : null; };
+const pbStr = (b, r) => r ? new TextDecoder().decode(b.subarray(r[0], r[1])) : "";
+
+// Returns [{line, stops:[{code, t}]}] for every trip in the feed
+async function fetchTrips(){
+  const r = await fetch(`${API}/gtfs/rail-gtfsrt-tripupdates.pb?api_key=${encodeURIComponent(apiKey)}`);
+  if (!r.ok) throw new Error("gtfs " + r.status);
+  const b = new Uint8Array(await r.arrayBuffer());
+  const trips = [];
+  for (const [f, ent] of pbFields(b)){
+    if (f !== 2) continue;
+    const tu = pbGet(b, ent, 3); if (!tu) continue;
+    const trip = pbGet(b, tu, 1);
+    const line = ROUTE_TO_LINE[(pbStr(b, trip && pbGet(b, trip, 5)) || "").toUpperCase()];
+    if (!line) continue;
+    const stops = [];
+    for (const [g, stu] of pbFields(b, tu[0], tu[1])){
+      if (g !== 2) continue;
+      const m = /([A-Z]\d\d)/.exec(pbStr(b, pbGet(b, stu, 4)));
+      const ev = pbGet(b, stu, 2) || pbGet(b, stu, 3);
+      const t = ev ? pbGet(b, ev, 2) : null;
+      if (m) stops.push({ code: m[1], t });
+    }
+    if (stops.length) trips.push({ line, stops });
+  }
+  return trips;
+}
+
+// Combine the long-range feed (more trains) with the station-sign feed (car counts, ARR/BRD).
+// Each train gets a "side": the station it's at plus the next station it heads to, i.e. the platform track.
+function buildTrains(preds, trips, wanted){
+  const now = Date.now() / 1000, out = [];
+  const predList = (preds||[]).filter(p => wanted.has(p.LocationCode) && isRevenue(p)).map(p => ({ p, used:false, m: minSort(p.Min) }));
+  const groupSide = {};
+  if (trips){
+    for (const tr of trips){
+      tr.stops.forEach((s, i) => {
+        if (!wanted.has(s.code) || !s.t) return;
+        const next = tr.stops[i+1]; if (!next) return;            // train ends here
+        const mins = (s.t - now) / 60;
+        if (mins < -1 || mins > MAX_MIN) return;
+        const last = tr.stops[tr.stops.length-1].code;
+        const t = { st: s.code, line: tr.line, sort: mins, minText: String(Math.max(0, Math.round(mins))),
+                    destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
+                    after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true };
+        let best = null;
+        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 3 && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
+        if (best){
+          best.used = true; t.est = false; t.sort = best.m; t.minText = best.p.Min;
+          t.cars = /^\d+$/.test(best.p.Car) ? best.p.Car : "";
+          groupSide[s.code + "|" + best.p.Group] = t.side;
+        }
+        out.push(t);
+      });
+    }
+  }
+  for (const c of predList){
+    if (c.used) continue;
+    const p = c.p;
+    out.push({ st: p.LocationCode, line: p.Line, sort: c.m, minText: p.Min, destCode: p.DestinationCode || "",
+               dest: p.DestinationName || p.Destination, side: groupSide[p.LocationCode + "|" + p.Group] || p.LocationCode + "|" + p.Group,
+               after: [], cars: /^\d+$/.test(p.Car) ? p.Car : "", est: false });
+  }
+  return out.sort((a,b) => a.sort - b.sort);
 }
 
 // ----- Commute filtering -----
-// A platform side (LocationCode|Group) counts as "toward X" if any train there is headed to X.
-// That catches trains ending early. The side is remembered in case no X-bound train is listed right now.
+// A side counts as "toward X" if any train there passes or ends at X. That catches trains ending early.
+// The side is remembered in case no X-bound train is listed right now.
 function commuteTrains(c, trains){
   const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) return [];
-  const here = trains.filter(t => c.station.codes.includes(t.LocationCode) && isRevenue(t));
-  const hit = t => opt.codes.includes(t.DestinationCode) || opt.kw.some(w => `${t.DestinationName||""} ${t.Destination||""}`.toLowerCase().includes(w));
-  const sides = new Set(here.filter(hit).map(t => t.LocationCode+"|"+t.Group));
-  if (sides.size){ const g = [...sides][0]; if (c.side !== g){ c.side = g; saveCommutes(); } }
+  const here = trains.filter(t => c.station.codes.includes(t.st));
+  const hit = t => opt.codes.includes(t.destCode) || t.after.some(x => opt.codes.includes(x)) || opt.kw.some(w => (t.dest||"").toLowerCase().includes(w));
+  const sides = new Set(here.filter(hit).map(t => t.side));
+  if (sides.size){ const g = [...sides].find(s => s.includes(">")) || [...sides][0]; if (c.side !== g){ c.side = g; saveCommutes(); } }
   else if (c.side) sides.add(c.side);
-  return here.filter(t => t.Line === c.line && (hit(t) || sides.has(t.LocationCode+"|"+t.Group)))
-             .sort((a,b)=>minSort(a.Min)-minSort(b.Min));
+  return here.filter(t => t.line === c.line && (hit(t) || sides.has(t.side))).slice(0, 8);
 }
 
 function commuteHTML(key){
@@ -245,7 +329,7 @@ function commuteHTML(key){
   else {
     const list = commuteTrains(c, lastData.trains);
     if (!list.length) body = `<div class="msg">No ${lineName} Line trains toward ${esc(opt.label)} predicted right now.</div>`;
-    else body = `<div class="trains">${list.map(rowHTML).join("")}</div>`;
+    else body = `<div class="trains">${list.map(rowHTML).join("")}</div>${estNote(list)}`;
   }
   return `<div class="card commute">${head}${body}</div>`;
 }
@@ -283,15 +367,17 @@ function platformsHTML(f){
   if (!apiKey) return `<div class="msg">Add your API key to see arrivals.</div>`;
   if (lastData?.error) return `<div class="msg err">${esc(lastData.error)}</div>`;
   if (!lastData) return `<div class="msg">Loading arrivals…</div>`;
-  const trains = lastData.trains.filter(t => f.codes.includes(t.LocationCode) && isRevenue(t));
+  const trains = lastData.trains.filter(t => f.codes.includes(t.st));
   if (!trains.length) return `<div class="msg">No trains predicted right now.</div>`;
   const groups = {};
-  for (const t of trains) (groups[t.LocationCode + "|" + t.Group] ||= []).push(t);
-  return Object.values(groups).map(list => {
-    list.sort((a,b)=>minSort(a.Min)-minSort(b.Min));
-    const dests = [...new Set(list.map(t=>t.Destination))].join(" · ");
-    return `<div class="platform"><div class="plabel">Toward ${esc(dests)}</div>${list.slice(0,4).map(rowHTML).join("")}</div>`;
+  for (const t of trains) (groups[t.side] ||= []).push(t);
+  const shown = [];
+  const html = Object.values(groups).sort((a,b) => a[0].sort - b[0].sort).map(list => {
+    const top = list.slice(0, 5); shown.push(...top);
+    const dests = [...new Set(top.map(t=>t.dest))].join(" · ");
+    return `<div class="platform"><div class="plabel">Toward ${esc(dests)}</div>${top.map(rowHTML).join("")}</div>`;
   }).join("");
+  return html + estNote(shown);
 }
 
 function render(){
@@ -321,13 +407,18 @@ function renderStationList(){
 
 async function refresh(){
   if (!apiKey) { render(); return; }
-  const codes = [...new Set([...favs.flatMap(f=>f.codes), ...Object.values(commutes).flatMap(c=>c.station.codes)])].join(",");
-  try{
-    const d = await api(`/StationPrediction.svc/json/GetPrediction/${codes}`);
-    lastData = { trains: d.Trains || [] };
-    lastTime = Date.now();
-  }catch(e){
+  const wanted = new Set([...favs.flatMap(f=>f.codes), ...Object.values(commutes).flatMap(c=>c.station.codes)]);
+  if (!stations) await loadStations().catch(()=>{});
+  const [pr, gt] = await Promise.allSettled([
+    api(`/StationPrediction.svc/json/GetPrediction/${[...wanted].join(",")}`),
+    fetchTrips()
+  ]);
+  if (pr.status === "rejected" && gt.status === "rejected"){
+    const e = pr.reason;
     lastData = { error: /fetch|network/i.test(e.message) ? "Can't reach WMATA. Check your connection." : e.message };
+  } else {
+    lastData = { trains: buildTrains(pr.value?.Trains, gt.value || null, wanted) };
+    lastTime = Date.now();
   }
   render(); tick();
 }
