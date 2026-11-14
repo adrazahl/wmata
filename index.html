@@ -6,6 +6,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#eef0ee">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>My Metro</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@600&display=swap">
@@ -280,7 +283,7 @@ function buildTrains(preds, trips, wanted){
                     destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
                     after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true };
         let best = null;
-        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 3 && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
+        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 4 && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
         if (best){
           best.used = true; t.est = false; t.sort = best.m; t.minText = best.p.Min;
           t.cars = /^\d+$/.test(best.p.Car) ? best.p.Car : "";
