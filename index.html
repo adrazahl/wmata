@@ -107,6 +107,14 @@ details.alerts .alertbox{margin-top:0}
 .seg button[aria-pressed=true]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .linkbtn{align-self:flex-start;font-size:14px;font-weight:600;color:var(--accent);text-decoration:underline;padding:2px 0}
 a.iconbtn{color:var(--fg);text-decoration:none}
+#mapView{position:fixed;inset:0;z-index:50;background:#fff;display:flex;flex-direction:column}
+.mapbar{display:flex;align-items:center;gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));border-bottom:1px solid var(--line);background:var(--bg)}
+.mapbar b{flex:1;font-size:17px}
+.mapbar .iconbtn{font-size:20px}
+#mapScroll{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;overscroll-behavior:contain}
+#mapCanvas{display:block;transform-origin:0 0}
+#mapMsg{position:absolute;top:50%;left:0;right:0;text-align:center;transform:translateY(-50%)}
+#mapMsg a{color:var(--accent)}
 .iconbtn svg{width:20px;height:20px}
 
 section.sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -132,9 +140,9 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mu
     <div class="logo" aria-hidden="true">M</div>
     <h1>My Metro</h1>
     <span id="updated"></span>
-    <a class="iconbtn" id="mapBtn" href="https://www.wmata.com/content/dam/wmata-com/maps/system-map-rail.pdf" target="_blank" rel="noopener" aria-label="Metro system map" title="Metro system map">
+    <button class="iconbtn" id="mapBtn" aria-label="Metro system map" title="Metro system map">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>
-    </a>
+    </button>
     <button class="iconbtn" id="refreshBtn" aria-label="Refresh">↻</button>
     <button class="btn" id="editBtn">Edit</button>
   </header>
@@ -168,6 +176,17 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mu
 
   <div id="boards"></div>
 </main>
+
+<div id="mapView" hidden role="dialog" aria-label="Metro system map">
+  <div class="mapbar">
+    <b>Metro map</b>
+    <button class="iconbtn" id="mapOut" aria-label="Zoom out">−</button>
+    <button class="iconbtn" id="mapIn" aria-label="Zoom in">+</button>
+    <button class="iconbtn" id="mapClose" aria-label="Close map">✕</button>
+  </div>
+  <div id="mapScroll"><canvas id="mapCanvas"></canvas></div>
+  <div id="mapMsg" class="msg" hidden></div>
+</div>
 
 <script>
 const API = "https://api.wmata.com";
@@ -650,6 +669,115 @@ document.addEventListener("visibilitychange", () => {
 });
 setInterval(tick, 1000);
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+
+// ----- Map viewer -----
+// Draws map.pdf (uploaded to the repo next to this file) with pdf.js, so it opens in the app
+// instead of downloading. Redrawn at each zoom level, so it stays sharp.
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+const MAP_FALLBACK = "https://www.wmata.com/schedules/maps/";
+let mapPage = null, mapZoom = 1, mapTask = null, mapFit = 1;
+
+function loadScript(src){
+  return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); });
+}
+
+async function openMap(){
+  $("mapView").hidden = false;
+  document.body.style.overflow = "hidden";
+  try{ history.pushState({ map: 1 }, ""); }catch{}
+  if (!mapPage){
+    $("mapMsg").hidden = false; $("mapMsg").textContent = "Loading map…";
+    try{
+      if (!window.pdfjsLib) await loadScript(PDFJS + "pdf.min.js");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
+      const doc = await pdfjsLib.getDocument("map.pdf").promise;
+      mapPage = await doc.getPage(1);
+    }catch(e){
+      $("mapMsg").innerHTML = `Couldn't load the map. <a href="${MAP_FALLBACK}" target="_blank" rel="noopener">Open WMATA's maps page</a>`;
+      return;
+    }
+    $("mapMsg").hidden = true;
+  }
+  mapZoom = 1;
+  await renderMap();
+}
+
+function closeMap(fromBack){
+  if ($("mapView").hidden) return;
+  $("mapView").hidden = true;
+  document.body.style.overflow = "";
+  if (!fromBack){ try{ if (history.state?.map) history.back(); }catch{} }
+}
+
+// Redraw at the current zoom, keeping the point at (sx, sy) on screen in the same place.
+async function renderMap(sx, sy){
+  if (!mapPage) return;
+  const box = $("mapScroll"), canvas = $("mapCanvas");
+  const base = mapPage.getViewport({ scale: 1 });
+  mapFit = box.clientWidth / base.width;
+  const oldW = canvas.offsetWidth || 1;
+  if (sx == null){ sx = box.clientWidth / 2; sy = box.clientHeight / 2; }
+  const px = (box.scrollLeft + sx) / oldW, py = (box.scrollTop + sy) / (canvas.offsetHeight || 1);
+  // Phones cap canvas size, so limit the drawn pixels; CSS size still follows the zoom.
+  const cssScale = mapFit * mapZoom, dpr = window.devicePixelRatio || 1;
+  const vp = mapPage.getViewport({ scale: cssScale });
+  const pixScale = Math.min(dpr, Math.sqrt(16e6 / (vp.width * vp.height)));
+  if (mapTask){ try{ mapTask.cancel(); }catch{} }
+  const off = document.createElement("canvas");
+  off.width = Math.floor(vp.width * pixScale); off.height = Math.floor(vp.height * pixScale);
+  mapTask = mapPage.render({ canvasContext: off.getContext("2d"), viewport: vp, transform: pixScale !== 1 ? [pixScale,0,0,pixScale,0,0] : null });
+  try{ await mapTask.promise; }catch{ return; }   // cancelled by a newer zoom
+  canvas.width = off.width; canvas.height = off.height;
+  canvas.getContext("2d").drawImage(off, 0, 0);
+  canvas.style.width = vp.width + "px"; canvas.style.height = vp.height + "px";
+  canvas.style.transform = "";
+  box.scrollLeft = px * vp.width - sx; box.scrollTop = py * vp.height - sy;
+}
+
+function zoomMap(factor, sx, sy){
+  const z = Math.min(8, Math.max(1, mapZoom * factor));
+  if (z === mapZoom) return;
+  mapZoom = z; renderMap(sx, sy);
+}
+
+// Two-finger pinch: stretch the current drawing while pinching, redraw sharp when fingers lift.
+(() => {
+  const box = $("mapScroll"), canvas = $("mapCanvas");
+  let d0 = 0, mid = null, ratio = 1;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  box.addEventListener("touchstart", e => {
+    if (e.touches.length === 2){
+      d0 = dist(e.touches); ratio = 1;
+      const r = box.getBoundingClientRect();
+      mid = { x: (e.touches[0].clientX + e.touches[1].clientX)/2 - r.left, y: (e.touches[0].clientY + e.touches[1].clientY)/2 - r.top };
+    }
+  }, { passive: true });
+  box.addEventListener("touchmove", e => {
+    if (e.touches.length !== 2 || !d0) return;
+    e.preventDefault();
+    ratio = Math.min(8 / mapZoom, Math.max(1 / mapZoom, dist(e.touches) / d0));
+    canvas.style.transformOrigin = `${box.scrollLeft + mid.x}px ${box.scrollTop + mid.y}px`;
+    canvas.style.transform = `scale(${ratio})`;
+  }, { passive: false });
+  box.addEventListener("touchend", e => {
+    if (!d0 || e.touches.length) return;
+    d0 = 0;
+    if (Math.abs(ratio - 1) > 0.02) zoomMap(ratio, mid.x, mid.y); else canvas.style.transform = "";
+  });
+  let lastTap = 0;
+  box.addEventListener("click", e => {          // double-tap to zoom in
+    const now = Date.now();
+    if (now - lastTap < 300){ const r = box.getBoundingClientRect(); zoomMap(2, e.clientX - r.left, e.clientY - r.top); lastTap = 0; }
+    else lastTap = now;
+  });
+})();
+
+$("mapBtn").addEventListener("click", openMap);
+$("mapClose").addEventListener("click", () => closeMap(false));
+$("mapIn").addEventListener("click", () => zoomMap(1.6));
+$("mapOut").addEventListener("click", () => zoomMap(1/1.6));
+window.addEventListener("popstate", () => closeMap(true));
+window.addEventListener("resize", () => { if (!$("mapView").hidden) renderMap(); });
 
 // ----- Boot -----
 $("keySheet").hidden = !!apiKey;

@@ -9,7 +9,7 @@ A small phone web app that shows live WMATA Metrorail arrival times for my commu
 - **Backup station:** each commute can have a backup station (for example King St-Old Town). A switch at the bottom of the card flips between them.
 - **Disruptions:** if trains on your line end early or get rerouted, the commute card shows where they're actually going, other trains from the same platform, and WMATA's alert text.
 - **Station alerts:** favorite stations show a collapsible list of current train alerts for their lines.
-- **Metro map:** the map button opens WMATA's official rail system map (PDF).
+- **Metro map:** the map button opens `map.pdf` (WMATA's rail system map) inside the app, with pinch-to-zoom.
 - **Live data:** refreshes every 20 seconds. Trains on the station sign show in dark text with car counts. Trains further out, from WMATA's longer-range feed, show in gray.
 
 ## Using it
