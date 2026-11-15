@@ -184,7 +184,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mu
     <button class="iconbtn" id="mapIn" aria-label="Zoom in">+</button>
     <button class="iconbtn" id="mapClose" aria-label="Close map">✕</button>
   </div>
-  <div id="mapScroll"><canvas id="mapCanvas"></canvas></div>
+  <div id="mapScroll"><div id="mapCanvas"></div></div>
   <div id="mapMsg" class="msg" hidden></div>
 </div>
 
@@ -671,35 +671,36 @@ setInterval(tick, 1000);
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
 
 // ----- Map viewer -----
-// Draws map.pdf (uploaded to the repo next to this file) with pdf.js, so it opens in the app
-// instead of downloading. Redrawn at each zoom level, so it stays sharp.
-const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+// Shows map.svg (WMATA's system map, converted to vector SVG and kept next to this file).
+// It's loaded only when the map opens, drawn inline so it stays sharp at every zoom.
 const MAP_FALLBACK = "https://www.wmata.com/schedules/maps/";
-let mapPage = null, mapZoom = 1, mapTask = null, mapFit = 1;
-
-function loadScript(src){
-  return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); });
-}
+let mapSvg = null, mapZoom = 1, mapFit = 1, mapW = 1080, mapH = 1312;
 
 async function openMap(){
   $("mapView").hidden = false;
   document.body.style.overflow = "hidden";
   try{ history.pushState({ map: 1 }, ""); }catch{}
-  if (!mapPage){
+  if (!mapSvg){
     $("mapMsg").hidden = false; $("mapMsg").textContent = "Loading map…";
     try{
-      if (!window.pdfjsLib) await loadScript(PDFJS + "pdf.min.js");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js";
-      const doc = await pdfjsLib.getDocument("map.pdf").promise;
-      mapPage = await doc.getPage(1);
+      const r = await fetch("map.svg"); if (!r.ok) throw new Error(r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), "image/svg+xml");
+      mapSvg = document.importNode(doc.documentElement, true);
+      if (mapSvg.nodeName.toLowerCase() !== "svg") throw new Error("bad map");
+      const vb = (mapSvg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+      if (vb.length === 4 && vb[2] > 0){ mapW = vb[2]; mapH = vb[3]; }
+      else mapSvg.setAttribute("viewBox", `0 0 ${mapW} ${mapH}`);
+      mapSvg.id = "mapCanvas";
+      $("mapCanvas").replaceWith(mapSvg);
     }catch(e){
+      mapSvg = null;
       $("mapMsg").innerHTML = `Couldn't load the map. <a href="${MAP_FALLBACK}" target="_blank" rel="noopener">Open WMATA's maps page</a>`;
       return;
     }
     $("mapMsg").hidden = true;
   }
   mapZoom = 1;
-  await renderMap();
+  renderMap();
 }
 
 function closeMap(fromBack){
@@ -709,29 +710,19 @@ function closeMap(fromBack){
   if (!fromBack){ try{ if (history.state?.map) history.back(); }catch{} }
 }
 
-// Redraw at the current zoom, keeping the point at (sx, sy) on screen in the same place.
-async function renderMap(sx, sy){
-  if (!mapPage) return;
-  const box = $("mapScroll"), canvas = $("mapCanvas");
-  const base = mapPage.getViewport({ scale: 1 });
-  mapFit = box.clientWidth / base.width;
-  const oldW = canvas.offsetWidth || 1;
+// Resize to the current zoom, keeping the point at (sx, sy) on screen in the same place.
+function renderMap(sx, sy){
+  if (!mapSvg) return;
+  const box = $("mapScroll");
+  mapFit = box.clientWidth / mapW;
+  const oldW = parseFloat(mapSvg.getAttribute("width")) || mapW;
   if (sx == null){ sx = box.clientWidth / 2; sy = box.clientHeight / 2; }
-  const px = (box.scrollLeft + sx) / oldW, py = (box.scrollTop + sy) / (canvas.offsetHeight || 1);
-  // Phones cap canvas size, so limit the drawn pixels; CSS size still follows the zoom.
-  const cssScale = mapFit * mapZoom, dpr = window.devicePixelRatio || 1;
-  const vp = mapPage.getViewport({ scale: cssScale });
-  const pixScale = Math.min(dpr, Math.sqrt(16e6 / (vp.width * vp.height)));
-  if (mapTask){ try{ mapTask.cancel(); }catch{} }
-  const off = document.createElement("canvas");
-  off.width = Math.floor(vp.width * pixScale); off.height = Math.floor(vp.height * pixScale);
-  mapTask = mapPage.render({ canvasContext: off.getContext("2d"), viewport: vp, transform: pixScale !== 1 ? [pixScale,0,0,pixScale,0,0] : null });
-  try{ await mapTask.promise; }catch{ return; }   // cancelled by a newer zoom
-  canvas.width = off.width; canvas.height = off.height;
-  canvas.getContext("2d").drawImage(off, 0, 0);
-  canvas.style.width = vp.width + "px"; canvas.style.height = vp.height + "px";
-  canvas.style.transform = "";
-  box.scrollLeft = px * vp.width - sx; box.scrollTop = py * vp.height - sy;
+  const oldH = oldW * mapH / mapW;
+  const px = (box.scrollLeft + sx) / oldW, py = (box.scrollTop + sy) / oldH;
+  const w = mapW * mapFit * mapZoom, h = mapH * mapFit * mapZoom;
+  mapSvg.setAttribute("width", w); mapSvg.setAttribute("height", h);
+  mapSvg.style.transform = "";
+  box.scrollLeft = px * w - sx; box.scrollTop = py * h - sy;
 }
 
 function zoomMap(factor, sx, sy){
@@ -742,7 +733,7 @@ function zoomMap(factor, sx, sy){
 
 // Two-finger pinch: stretch the current drawing while pinching, redraw sharp when fingers lift.
 (() => {
-  const box = $("mapScroll"), canvas = $("mapCanvas");
+  const box = $("mapScroll"), canvas = { get style(){ return (mapSvg || $("mapCanvas")).style; } };
   let d0 = 0, mid = null, ratio = 1;
   const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   box.addEventListener("touchstart", e => {
