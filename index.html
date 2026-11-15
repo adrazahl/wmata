@@ -17,6 +17,7 @@
 :root{
   --bg:#eef0ee; --panel:#ffffff; --line:#d9ddd9; --fg:#1b1f1e; --muted:#66706c;
   --amber:#3d2b25; --accent:#3d2b25; --danger:#b3261e; --live:#b4540a; --hi:#f6f3ea;
+  --warn-bg:#fdf1e1; --warn-line:#efc98f; --warn-fg:#6b3a06;
   --RD:#BF0D3E; --OR:#ED8B00; --BL:#009CDE; --YL:#FFD100; --GR:#00B140; --SV:#919D9D;
   --sans:"Overpass",-apple-system,"Helvetica Neue",Arial,sans-serif;
   --mono:"Overpass Mono",ui-monospace,Menlo,monospace;
@@ -81,6 +82,32 @@ main{display:flex;flex-direction:column;gap:14px;padding-top:14px}
 .trains .row:first-child{background:var(--hi);margin:0 -14px;padding:12px 14px;border-bottom:1px solid var(--line)}
 .trains .row:first-child .dest{font-size:18px;font-weight:800}
 .trains .row:first-child .min{font-size:26px}
+.tag{display:block;width:fit-content;margin-top:3px;padding:1px 6px 0;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.02em;background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-line)}
+.trains .row:first-child .tag{font-size:11px}
+.alertbox{margin:0 14px 12px;padding:10px 12px;border-radius:8px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-fg);font-size:14px;line-height:1.4;display:flex;flex-direction:column;gap:8px}
+.alertbox .al{display:flex;flex-direction:column;gap:2px}
+.alertbox .al b{font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.alertbox .when{font-size:12px;opacity:.8}
+details.alerts{border-top:1px solid var(--line)}
+details.alerts summary{cursor:pointer;padding:10px 14px;font-size:14px;font-weight:600;color:var(--warn-fg);list-style:none;display:flex;align-items:center;gap:8px}
+details.alerts summary::-webkit-details-marker{display:none}
+details.alerts summary::after{content:"▾";margin-left:auto;transition:transform .15s}
+details.alerts[open] summary::after{transform:rotate(180deg)}
+details.alerts .alertbox{margin-top:0}
+.subhead{border-top:1px solid var(--line);padding:10px 14px 0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.subhead + .trains{border-top:0}
+.trains.plain .row:first-child{background:none;margin:0;padding:7px 0;border-bottom:1px dashed var(--line)}
+.trains.plain .row:first-child .dest{font-size:16px;font-weight:600}
+.trains.plain .row:first-child .min{font-size:18px}
+.trains.plain .row:last-child{border-bottom:0}
+.switch{border-top:1px solid var(--line);padding:10px 14px 12px;display:flex;flex-direction:column;gap:6px}
+.switch .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
+.seg button{padding:9px 6px 7px;border-radius:7px;font-size:14px;font-weight:600;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seg button[aria-pressed=true]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.linkbtn{align-self:flex-start;font-size:14px;font-weight:600;color:var(--accent);text-decoration:underline;padding:2px 0}
+a.iconbtn{color:var(--fg);text-decoration:none}
+.iconbtn svg{width:20px;height:20px}
 
 section.sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
 .sheet h3{margin:0;font-size:15px;font-weight:800}
@@ -105,6 +132,9 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mu
     <div class="logo" aria-hidden="true">M</div>
     <h1>My Metro</h1>
     <span id="updated"></span>
+    <a class="iconbtn" id="mapBtn" href="https://www.wmata.com/content/dam/wmata-com/maps/system-map-rail.pdf" target="_blank" rel="noopener" aria-label="Metro system map" title="Metro system map">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>
+    </a>
     <button class="iconbtn" id="refreshBtn" aria-label="Refresh">↻</button>
     <button class="btn" id="editBtn">Edit</button>
   </header>
@@ -153,8 +183,10 @@ const TOWARD = {
   GR:[{label:"Greenbelt",codes:["E10"],kw:["greenbelt"]},{label:"Branch Ave",codes:["F11"],kw:["branch"]}]
 };
 const DEFAULT_COMMUTES = {
-  morning:{ station:{name:"Braddock Road",codes:["C12"],lines:["BL","YL"]}, line:"BL", toward:0, start:"07:30", end:"09:30" },
-  evening:{ station:{name:"Farragut West",codes:["C03"],lines:["BL","OR","SV"]}, line:"BL", toward:1, start:"16:00", end:"18:00" }
+  morning:{ station:{name:"Braddock Road",codes:["C12"],lines:["BL","YL"]}, backup:{name:"King St-Old Town",codes:["C13"],lines:["BL","YL"]}, useBackup:false,
+            line:"BL", toward:0, start:"07:30", end:"09:30" },
+  evening:{ station:{name:"Farragut West",codes:["C03"],lines:["BL","OR","SV"]}, backup:null, useBackup:false,
+            line:"BL", toward:1, start:"16:00", end:"18:00" }
 };
 
 const store = {
@@ -164,8 +196,12 @@ const store = {
 
 let apiKey = store.get("wm_key", "");
 let favs = store.get("wm_favs", [{ name: "Braddock Road", codes: ["C12"], lines: ["BL","YL"] }]);
-let commutes = Object.assign(structuredClone(DEFAULT_COMMUTES), store.get("wm_commutes", {}));
+let commutes = (() => { const saved = store.get("wm_commutes", {}), out = {};
+  for (const k in DEFAULT_COMMUTES) out[k] = { ...structuredClone(DEFAULT_COMMUTES[k]), ...(saved[k]||{}) };
+  return out; })();
 let stations = store.get("wm_stations", null);
+let nextStop = store.get("wm_next", {});   // "C12|G05" -> code of the next station toward that end of the line
+let openAlerts = new Set();                // favorite alert sections the user has expanded
 let tab = "favorites";
 let editing = false;
 let lastData = null, lastTime = null, timer = null;
@@ -202,7 +238,7 @@ async function loadStations(){
   store.set("wm_stations", stations);
   const match = f => stations.find(s => s.codes.some(c => f.codes.includes(c))) || f;
   favs = favs.map(match); store.set("wm_favs", favs);
-  for (const k in commutes) commutes[k].station = match(commutes[k].station);
+  for (const k in commutes){ commutes[k].station = match(commutes[k].station); if (commutes[k].backup) commutes[k].backup = match(commutes[k].backup); }
   saveCommutes();
   return stations;
 }
@@ -218,7 +254,7 @@ const MAX_MIN = 90;
 function rowHTML(t){
   return `<div class="row${t.est?" est":""}">
     <span class="badge ${esc(t.line)}" style="background:var(--${esc(t.line)},#555)">${esc(t.line)}</span>
-    <span class="dest">${esc(t.dest)}</span>
+    <span class="dest">${esc(t.dest)}${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ""}</span>
     <span class="cars">${t.cars ? esc(t.cars)+" car" : ""}</span>
     ${minHTML(t.minText)}</div>`;
 }
@@ -304,37 +340,99 @@ function buildTrains(preds, trips, wanted){
 }
 
 // ----- Commute filtering -----
-// A side counts as "toward X" if any train there passes or ends at X. That catches trains ending early.
-// The side is remembered in case no X-bound train is listed right now.
+const activeStation = c => (c.useBackup && c.backup) ? c.backup : c.station;
+
+// Which platform track heads toward the chosen end of the line, from WMATA's station path (cached).
+// This works even when no train is running all the way there.
+async function ensureNextStops(){
+  let changed = false;
+  for (const c of Object.values(commutes)){
+    const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) continue;
+    for (const st of [c.station, c.backup].filter(Boolean)){
+      for (const code of st.codes){
+        const k = code + "|" + opt.codes[0];
+        if (k in nextStop || code === opt.codes[0]) continue;
+        try{
+          const d = await api(`/Rail.svc/json/jPath?FromStationCode=${code}&ToStationCode=${opt.codes[0]}`);
+          const path = (d.Path||[]).sort((a,b)=>a.SeqNum-b.SeqNum).map(p=>p.StationCode);
+          const i = path.indexOf(code);
+          nextStop[k] = (i >= 0 && path[i+1]) || null;   // null = not on this line; don't ask again
+          changed = true;
+        }catch{}
+      }
+    }
+  }
+  if (changed) store.set("wm_next", nextStop);
+}
+
+// Returns { mine: trains on your line on your track, others: other lines on that track }.
+// A train on your track that won't reach your destination is flagged "short" (ends early or rerouted).
 function commuteTrains(c, trains){
-  const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) return [];
-  const here = trains.filter(t => c.station.codes.includes(t.st));
+  const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) return { mine:[], others:[] };
+  const st = activeStation(c);
+  const here = trains.filter(t => st.codes.includes(t.st));
   const hit = t => opt.codes.includes(t.destCode) || t.after.some(x => opt.codes.includes(x)) || opt.kw.some(w => (t.dest||"").toLowerCase().includes(w));
   const sides = new Set(here.filter(hit).map(t => t.side));
-  if (sides.size){ const g = [...sides].find(s => s.includes(">")) || [...sides][0]; if (c.side !== g){ c.side = g; saveCommutes(); } }
-  else if (c.side) sides.add(c.side);
-  return here.filter(t => t.line === c.line && (hit(t) || sides.has(t.side))).slice(0, 8);
+  for (const code of st.codes){ const n = nextStop[code + "|" + opt.codes[0]]; if (n) sides.add(code + ">" + n); }
+  const sideKey = "side_" + st.codes[0];
+  const fromHits = [...here.filter(hit).map(t => t.side)];
+  if (fromHits.length){ if (c[sideKey] !== fromHits[0]){ c[sideKey] = fromHits[0]; saveCommutes(); } }
+  else if (c[sideKey]) sides.add(c[sideKey]);
+  const onTrack = here.filter(t => hit(t) || sides.has(t.side));
+  const mine = onTrack.filter(t => t.line === c.line).slice(0, 8).map(t => ({ ...t, short: !hit(t) }));
+  const others = onTrack.filter(t => t.line !== c.line).slice(0, 5);
+  return { mine, others };
+}
+
+const incidentsFor = lines => (lastData?.incidents || []).filter(i => i.lines.some(l => lines.includes(l)));
+function alertsHTML(list){
+  return `<div class="alertbox" role="status">${list.map(i => `<div class="al">
+      <b>${esc(i.type || "Alert")}${i.lines.length ? " · " + i.lines.map(l => LINE_NAMES[l]||l).join(", ") : ""}</b>
+      <span>${esc(i.text)}</span>
+      ${i.updated ? `<span class="when">Updated ${esc(i.updated)}</span>` : ""}</div>`).join("")}</div>`;
 }
 
 function commuteHTML(key){
   const c = commutes[key];
+  const st = activeStation(c);
   const opt = (TOWARD[c.line]||[])[c.toward] || {label:"?"};
   const lineName = LINE_NAMES[c.line] || c.line;
-  const live = inWindow(c);
   const head = `<div class="card-h"><div class="hd">
-      <h2>${esc(c.station.name)}</h2>
+      <h2>${esc(st.name)}</h2>
       <div class="sub"><span class="badge ${c.line}" style="background:var(--${c.line})">${c.line}</span>${lineName} Line toward ${esc(opt.label)}</div>
     </div>${editing ? "" : `<button class="btn" data-act="change">Change</button>`}</div>`;
-  let body;
+  let body = "";
   if (!apiKey) body = `<div class="msg">Add your API key to see arrivals.</div>`;
   else if (lastData?.error) body = `<div class="msg err">${esc(lastData.error)}</div>`;
   else if (!lastData) body = `<div class="msg">Loading arrivals…</div>`;
   else {
-    const list = commuteTrains(c, lastData.trains);
-    if (!list.length) body = `<div class="msg">No ${lineName} Line trains toward ${esc(opt.label)} predicted right now.</div>`;
-    else body = `<div class="trains">${list.map(rowHTML).join("")}</div>${estNote(list)}`;
+    const alerts = incidentsFor([c.line]);
+    if (alerts.length) body += alertsHTML(alerts);
+    if (!st.lines.includes(c.line)) body += `<div class="msg">${esc(st.name)} isn't on the ${lineName} Line. Tap Change to pick another station or line.</div>`;
+    else {
+      const { mine, others } = commuteTrains(c, lastData.trains);
+      const goal = opt.kw[0].replace(/^./, ch => ch.toUpperCase());
+      const shortRow = t => rowHTML({ ...t, tag: t.short ? `Not to ${goal}` : "" });
+      if (mine.length) body += `<div class="trains">${mine.map(shortRow).join("")}</div>`;
+      else body += `<div class="msg">No ${lineName} Line trains toward ${esc(opt.label)} right now.</div>`;
+      const allShort = mine.length && mine.every(t => t.short);
+      if (others.length && (!mine.length || allShort))
+        body += `<div class="subhead">Other trains from this platform</div><div class="trains plain">${others.map(rowHTML).join("")}</div>`;
+      body += estNote([...mine, ...others]);
+    }
   }
-  return `<div class="card commute">${head}${body}</div>`;
+  return `<div class="card commute">${head}${body}${switchHTML(key)}</div>`;
+}
+
+function switchHTML(key){
+  if (editing) return "";
+  const c = commutes[key];
+  if (!c.backup) return `<div class="switch"><button class="linkbtn" data-act="change">Add a backup station</button></div>`;
+  return `<div class="switch"><span class="lbl">${key === "morning" ? "Leaving from" : "Boarding at"}</span>
+    <div class="seg" role="group">
+      <button data-act="usebackup" data-v="0" aria-pressed="${!c.useBackup}">${esc(c.station.name)}</button>
+      <button data-act="usebackup" data-v="1" aria-pressed="${!!c.useBackup}">${esc(c.backup.name)}</button>
+    </div></div>`;
 }
 
 function commuteEditHTML(key){
@@ -343,8 +441,14 @@ function commuteEditHTML(key){
     ? stations.map(s => `<option value="${s.codes.join(",")}" ${s.codes.some(x=>c.station.codes.includes(x))?"selected":""}>${esc(s.name)}</option>`).join("")
     : `<option>${esc(c.station.name)}</option>`;
   const lines = (c.station.lines||[]).length ? c.station.lines : Object.keys(LINE_NAMES);
+  const bkOpts = `<option value="">None</option>` + (stations
+    ? stations.filter(s => s.lines.includes(c.line) && !s.codes.some(x => c.station.codes.includes(x)))
+        .map(s => `<option value="${s.codes.join(",")}" ${c.backup && s.codes.some(x=>c.backup.codes.includes(x))?"selected":""}>${esc(s.name)}</option>`).join("")
+    : (c.backup ? `<option selected>${esc(c.backup.name)}</option>` : ""));
   return `<h3>${key==="morning"?"Morning":"Evening"} commute</h3>
     <label class="f">Station<select id="cmStation" ${stations?"":"disabled"}>${stOpts}</select></label>
+    <label class="f">Backup station<select id="cmBackup" ${stations?"":"disabled"}>${bkOpts}</select></label>
+    <p class="hint">The switch at the bottom of the card flips between your station and the backup. Same line and direction.</p>
     <div class="two">
       <label class="f">Line<select id="cmLine">${lines.map(l=>`<option value="${l}" ${l===c.line?"selected":""}>${LINE_NAMES[l]||l}</option>`).join("")}</select></label>
       <label class="f">Toward<select id="cmToward">${(TOWARD[c.line]||[]).map((o,i)=>`<option value="${i}" ${i===c.toward?"selected":""}>${esc(o.label)}</option>`).join("")}</select></label>
@@ -363,7 +467,15 @@ function favBoardHTML(f, i){
       <button class="iconbtn" data-act="up" data-i="${i}" aria-label="Move up" ${i===0?"disabled style='opacity:.3'":""}>↑</button>
       <button class="iconbtn" data-act="down" data-i="${i}" aria-label="Move down" ${i===favs.length-1?"disabled style='opacity:.3'":""}>↓</button>
       <button class="iconbtn rm" data-act="rm" data-i="${i}" aria-label="Remove">✕</button></div>` : `<div class="dots">${dots}</div>`;
-  return `<div class="card"><div class="card-h"><h2>${esc(f.name)}</h2>${ctrl}</div>${editing ? "" : platformsHTML(f)}</div>`;
+  return `<div class="card"><div class="card-h"><h2>${esc(f.name)}</h2>${ctrl}</div>${editing ? "" : platformsHTML(f) + favAlertsHTML(f)}</div>`;
+}
+
+function favAlertsHTML(f){
+  const list = incidentsFor(f.lines || []);
+  if (!list.length) return "";
+  const id = f.codes.join(",");
+  return `<details class="alerts" data-id="${esc(id)}" ${openAlerts.has(id) ? "open" : ""}>
+    <summary>⚠ ${list.length} train ${list.length === 1 ? "alert" : "alerts"}</summary>${alertsHTML(list)}</details>`;
 }
 
 function platformsHTML(f){
@@ -410,20 +522,36 @@ function renderStationList(){
 
 async function refresh(){
   if (!apiKey) { render(); return; }
-  const wanted = new Set([...favs.flatMap(f=>f.codes), ...Object.values(commutes).flatMap(c=>c.station.codes)]);
+  const wanted = new Set([...favs.flatMap(f=>f.codes),
+    ...Object.values(commutes).flatMap(c => [...c.station.codes, ...(c.backup ? c.backup.codes : [])])]);
   if (!stations) await loadStations().catch(()=>{});
-  const [pr, gt] = await Promise.allSettled([
+  const [pr, gt, inc] = await Promise.allSettled([
     api(`/StationPrediction.svc/json/GetPrediction/${[...wanted].join(",")}`),
-    fetchTrips()
+    fetchTrips(),
+    api(`/Incidents.svc/json/Incidents`),
+    ensureNextStops()
   ]);
   if (pr.status === "rejected" && gt.status === "rejected"){
     const e = pr.reason;
     lastData = { error: /fetch|network/i.test(e.message) ? "Can't reach WMATA. Check your connection." : e.message };
   } else {
-    lastData = { trains: buildTrains(pr.value?.Trains, gt.value || null, wanted) };
+    lastData = { trains: buildTrains(pr.value?.Trains, gt.value || null, wanted), incidents: parseIncidents(inc.value) };
     lastTime = Date.now();
   }
   render(); tick();
+}
+
+function parseIncidents(d){
+  if (!d || !Array.isArray(d.Incidents)) return [];
+  return d.Incidents.map(i => {
+    const dt = i.DateUpdated ? new Date(i.DateUpdated) : null;
+    return {
+      type: i.IncidentType || "",
+      text: i.Description || "",
+      lines: String(i.LinesAffected || "").split(/[;,\s]+/).filter(Boolean),
+      updated: dt && !isNaN(dt) ? dt.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : ""
+    };
+  }).filter(i => i.text);
 }
 
 function tick(){
@@ -455,6 +583,7 @@ window.addEventListener("hashchange", () => { const t = pickDefaultTab(); if (t 
 $("boards").addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   if (b.dataset.act === "change"){ $("editBtn").click(); window.scrollTo(0,0); return; }
+  if (b.dataset.act === "usebackup"){ commutes[tab].useBackup = b.dataset.v === "1"; saveCommutes(); render(); return; }
   const i = +b.dataset.i;
   if (b.dataset.act==="up" && i>0) [favs[i-1],favs[i]] = [favs[i],favs[i-1]];
   if (b.dataset.act==="down" && i<favs.length-1) [favs[i+1],favs[i]] = [favs[i],favs[i+1]];
@@ -470,13 +599,24 @@ $("stationList").addEventListener("click", e => {
   store.set("wm_favs", favs); render();
 });
 $("search").addEventListener("input", renderStationList);
+// Remember which favorite alert sections are open, so the 20-second refresh doesn't close them
+$("boards").addEventListener("toggle", e => {
+  const d = e.target; if (!d.matches || !d.matches("details.alerts")) return;
+  if (d.open) openAlerts.add(d.dataset.id); else openAlerts.delete(d.dataset.id);
+}, true);
 
 $("commuteSheet").addEventListener("change", e => {
   const c = commutes[tab];
+  if (["cmStation","cmBackup","cmLine","cmToward"].includes(e.target.id))
+    for (const k of Object.keys(c)) if (k === "side" || k.startsWith("side_")) delete c[k];
   if (e.target.id === "cmStation"){
     c.station = stations.find(s => s.codes.join(",") === e.target.value) || c.station;
     if (!c.station.lines.includes(c.line)) { c.line = c.station.lines[0]; c.toward = 0; }
     delete c.side;
+  }
+  if (e.target.id === "cmBackup"){
+    c.backup = e.target.value ? stations.find(s => s.codes.join(",") === e.target.value) || null : null;
+    if (!c.backup) c.useBackup = false;
   }
   if (e.target.id === "cmLine"){ c.line = e.target.value; c.toward = 0; delete c.side; }
   if (e.target.id === "cmToward"){ c.toward = +e.target.value; delete c.side; }
