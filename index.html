@@ -360,9 +360,15 @@ function buildTrains(preds, trips, wanted){
       const mins = (s.t - now) / 60;
       if (mins < -1 || mins > MAX_MIN) return;
       const last = tr.stops[tr.stops.length-1].code;
+      // Stops this train still has to make before reaching our station (for car counts from upstream signs)
+      const up = [];
+      for (let j = i - 1; j >= 0; j--){
+        const u = tr.stops[j]; if (!u.t || u.t < now - 30) break;
+        up.push({ code: u.code, m: (u.t - now) / 60, after: tr.stops.slice(j+1).map(x => x.code) });
+      }
       lr.push({ st: s.code, line: tr.line, sort: mins, minText: String(Math.max(0, Math.round(mins))),
                 destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
-                after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true, matched: false });
+                after: tr.stops.slice(i+1).map(x => x.code), up, cars: "", est: true, matched: false });
     });
   }
 
@@ -384,6 +390,27 @@ function buildTrains(preds, trips, wanted){
       g.destCode = dc; g.dest = stationName(dc) || signDest(c.p);
     }
     groupSide[c.p.LocationCode + "|" + c.p.Group] = g.side;
+  }
+
+  // 2b. Car counts for trains further out: find the same train on the sign at a station it hasn't
+  //     reached yet (same line and direction, arriving there within 2 minutes of when it's due).
+  const bySt = {};
+  (preds || []).forEach((p, id) => { if (isRevenue(p) && /^\d+$/.test(p.Car)) (bySt[p.LocationCode] ||= []).push({ p, id, m: minSort(p.Min) }); });
+  const upPairs = [];
+  for (const g of lr){
+    if (g.cars) continue;
+    g.up.forEach((u, hop) => {
+      for (const c of bySt[u.code] || [])
+        if (c.p.Line === g.line && Math.abs(c.m - u.m) <= 2 && sameDirection(c.p, { after: u.after, destCode: g.destCode }))
+          upPairs.push({ g, c, d: Math.abs(c.m - u.m) + hop * 0.01 });
+    });
+  }
+  upPairs.sort((a, b) => a.d - b.d);
+  const usedUp = new Set();
+  for (const { g, c } of upPairs){
+    const k = c.id + "|" + g.st;                  // one sign entry per train per station we show
+    if (g.cars || usedUp.has(k)) continue;
+    usedUp.add(k); g.cars = c.p.Car;
   }
 
   // 3. Sign trains with no partner still count. Place them on a track via a matched train on the
@@ -602,7 +629,7 @@ async function refresh(){
     ...Object.values(commutes).flatMap(c => [...c.station.codes, ...(c.backup ? c.backup.codes : [])])]);
   if (!stations) await loadStations().catch(()=>{});
   const [pr, gt, inc] = await Promise.allSettled([
-    api(`/StationPrediction.svc/json/GetPrediction/${[...wanted].join(",")}`),
+    api(`/StationPrediction.svc/json/GetPrediction/All`),   // every station's sign: needed for car counts further out
     fetchTrips(),
     api(`/Incidents.svc/json/Incidents`),
     ensureNextStops()
