@@ -216,7 +216,10 @@ const store = {
 let apiKey = store.get("wm_key", "");
 let favs = store.get("wm_favs", [{ name: "Braddock Road", codes: ["C12"], lines: ["BL","YL"] }]);
 let commutes = (() => { const saved = store.get("wm_commutes", {}), out = {};
-  for (const k in DEFAULT_COMMUTES) out[k] = { ...structuredClone(DEFAULT_COMMUTES[k]), ...(saved[k]||{}) };
+  for (const k in DEFAULT_COMMUTES){
+    out[k] = { ...structuredClone(DEFAULT_COMMUTES[k]), ...(saved[k]||{}) };
+    for (const f of Object.keys(out[k])) if (f === "side" || f.startsWith("side_")) delete out[k][f];   // drop tracks remembered by older versions
+  }
   return out; })();
 let stations = store.get("wm_stations", null);
 let nextStop = store.get("wm_next", {});   // "C12|G05" -> code of the next station toward that end of the line
@@ -320,6 +323,17 @@ async function fetchTrips(){
   return trips;
 }
 
+// Does a station-sign train head the same way as a long-range-feed train? Checked by the sign's
+// destination code, or by its (abbreviated) destination name, against the stops still ahead.
+// If neither can be checked, they aren't paired.
+function sameDirection(p, t){
+  const ahead = [...t.after, t.destCode];
+  if (p.DestinationCode) return ahead.includes(p.DestinationCode);
+  const words = String(p.DestinationName || p.Destination || "").toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4);
+  if (!words.length || !stations) return false;
+  return ahead.some(code => { const n = stationName(code).toLowerCase(); return n && words.some(w => n.includes(w)); });
+}
+
 // Combine the long-range feed (more trains) with the station-sign feed (car counts, ARR/BRD).
 // Each train gets a "side": the station it's at plus the next station it heads to, i.e. the platform track.
 function buildTrains(preds, trips, wanted){
@@ -338,7 +352,8 @@ function buildTrains(preds, trips, wanted){
                     destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
                     after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true };
         let best = null;
-        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 4 && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
+        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 4
+                                      && sameDirection(c.p, t) && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
         if (best){
           best.used = true; t.est = false; t.sort = best.m; t.minText = best.p.Min;
           t.cars = /^\d+$/.test(best.p.Car) ? best.p.Car : "";
@@ -390,14 +405,25 @@ function commuteTrains(c, trains){
   const opt = (TOWARD[c.line]||[])[c.toward]; if (!opt) return { mine:[], others:[] };
   const st = activeStation(c);
   const here = trains.filter(t => st.codes.includes(t.st));
-  const hit = t => opt.codes.includes(t.destCode) || t.after.some(x => opt.codes.includes(x)) || opt.kw.some(w => (t.dest||"").toLowerCase().includes(w));
-  const sides = new Set(here.filter(hit).map(t => t.side));
-  for (const code of st.codes){ const n = nextStop[code + "|" + opt.codes[0]]; if (n) sides.add(code + ">" + n); }
-  const sideKey = "side_" + st.codes[0];
-  const fromHits = [...here.filter(hit).map(t => t.side)];
+  const reaches = (t, o) => o.codes.includes(t.destCode) || t.after.some(x => o.codes.includes(x)) || o.kw.some(w => (t.dest||"").toLowerCase().includes(w));
+  const hit = t => reaches(t, opt);
+  // Trains headed to the other end of the line are never on your track.
+  const opposite = (TOWARD[c.line]||[]).filter((o, i) => i !== c.toward);
+  const wrongWay = t => !hit(t) && opposite.some(o => reaches(t, o));
+  const hitSides = new Set(here.filter(hit).map(t => t.side));
+  const sides = new Set(hitSides);
+  for (const code of st.codes){
+    const k = code + "|" + opt.codes[0], n = nextStop[k];
+    const seen = [...hitSides].find(s => s.startsWith(code + ">"));
+    if (seen && n && seen !== code + ">" + n){ nextStop[k] = seen.split(">")[1]; store.set("wm_next", nextStop); }  // live trains win over the cached path
+    else if (n) sides.add(code + ">" + n);
+  }
+  const sideKey = "track_" + st.codes[0];
+  const fromHits = [...hitSides].filter(s => s.includes(">"));
   if (fromHits.length){ if (c[sideKey] !== fromHits[0]){ c[sideKey] = fromHits[0]; saveCommutes(); } }
   else if (c[sideKey]) sides.add(c[sideKey]);
-  const onTrack = here.filter(t => hit(t) || sides.has(t.side));
+  for (const t of here) if (wrongWay(t)) sides.delete(t.side);
+  const onTrack = here.filter(t => !wrongWay(t) && (hit(t) || sides.has(t.side)));
   const mine = onTrack.filter(t => t.line === c.line).slice(0, 8).map(t => ({ ...t, short: !hit(t) }));
   const others = onTrack.filter(t => t.line !== c.line).slice(0, 5);
   return { mine, others };
@@ -627,7 +653,7 @@ $("boards").addEventListener("toggle", e => {
 $("commuteSheet").addEventListener("change", e => {
   const c = commutes[tab];
   if (["cmStation","cmBackup","cmLine","cmToward"].includes(e.target.id))
-    for (const k of Object.keys(c)) if (k === "side" || k.startsWith("side_")) delete c[k];
+    for (const k of Object.keys(c)) if (k === "side" || k.startsWith("side_") || k.startsWith("track_")) delete c[k];
   if (e.target.id === "cmStation"){
     c.station = stations.find(s => s.codes.join(",") === e.target.value) || c.station;
     if (!c.station.lines.includes(c.line)) { c.line = c.station.lines[0]; c.toward = 0; }
