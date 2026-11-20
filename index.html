@@ -334,42 +334,73 @@ function sameDirection(p, t){
   return ahead.some(code => { const n = stationName(code).toLowerCase(); return n && words.some(w => n.includes(w)); });
 }
 
-// Combine the long-range feed (more trains) with the station-sign feed (car counts, ARR/BRD).
+// Which station is the sign train actually going to? Its code if given, else the stop ahead whose name matches.
+function signDestCode(p, t){
+  if (p.DestinationCode) return p.DestinationCode;
+  const words = String(p.DestinationName || p.Destination || "").toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4);
+  return [...t.after, t.destCode].find(code => { const n = stationName(code).toLowerCase(); return n && words.some(w => n.includes(w)); }) || "";
+}
+
+// Combine the station-sign feed with the long-range feed. The sign is the authority wherever it reaches:
+// its destination wins (it shows early turnbacks first), and long-range trains it doesn't show are dropped
+// for that stretch. Beyond the sign's last train, the long-range feed fills in (gray).
 // Each train gets a "side": the station it's at plus the next station it heads to, i.e. the platform track.
 function buildTrains(preds, trips, wanted){
   const now = Date.now() / 1000, out = [];
-  const predList = (preds||[]).filter(p => wanted.has(p.LocationCode) && isRevenue(p)).map(p => ({ p, used:false, m: minSort(p.Min) }));
+  const signs = (preds||[]).filter(p => wanted.has(p.LocationCode) && isRevenue(p)).map(p => ({ p, used:false, m: minSort(p.Min) }));
+  const cars = p => /^\d+$/.test(p.Car) ? p.Car : "";
+  const signDest = p => p.DestinationName || p.Destination;
+
+  // 1. Long-range trains at the stations we care about
+  const lr = [];
+  for (const tr of trips || []){
+    tr.stops.forEach((s, i) => {
+      if (!wanted.has(s.code) || !s.t) return;
+      const next = tr.stops[i+1]; if (!next) return;            // train ends here
+      const mins = (s.t - now) / 60;
+      if (mins < -1 || mins > MAX_MIN) return;
+      const last = tr.stops[tr.stops.length-1].code;
+      lr.push({ st: s.code, line: tr.line, sort: mins, minText: String(Math.max(0, Math.round(mins))),
+                destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
+                after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true, matched: false });
+    });
+  }
+
+  // 2. Pair sign trains with long-range trains: closest times first, same station, line and direction
+  const pairs = [];
+  for (const g of lr) for (const c of signs)
+    if (c.p.LocationCode === g.st && c.p.Line === g.line && Math.abs(c.m - g.sort) <= 4 && sameDirection(c.p, g))
+      pairs.push({ g, c, d: Math.abs(c.m - g.sort) });
+  pairs.sort((a, b) => a.d - b.d);
   const groupSide = {};
-  if (trips){
-    for (const tr of trips){
-      tr.stops.forEach((s, i) => {
-        if (!wanted.has(s.code) || !s.t) return;
-        const next = tr.stops[i+1]; if (!next) return;            // train ends here
-        const mins = (s.t - now) / 60;
-        if (mins < -1 || mins > MAX_MIN) return;
-        const last = tr.stops[tr.stops.length-1].code;
-        const t = { st: s.code, line: tr.line, sort: mins, minText: String(Math.max(0, Math.round(mins))),
-                    destCode: last, dest: stationName(last) || last, side: s.code + ">" + next.code,
-                    after: tr.stops.slice(i+1).map(x => x.code), cars: "", est: true };
-        let best = null;
-        for (const c of predList) if (!c.used && c.p.LocationCode === s.code && c.p.Line === tr.line && Math.abs(c.m - mins) <= 4
-                                      && sameDirection(c.p, t) && (!best || Math.abs(c.m - mins) < Math.abs(best.m - mins))) best = c;
-        if (best){
-          best.used = true; t.est = false; t.sort = best.m; t.minText = best.p.Min;
-          t.cars = /^\d+$/.test(best.p.Car) ? best.p.Car : "";
-          groupSide[s.code + "|" + best.p.Group] = t.side;
-        }
-        out.push(t);
-      });
+  for (const { g, c } of pairs){
+    if (g.matched || c.used) continue;
+    g.matched = c.used = true; g.est = false;
+    g.sort = c.m; g.minText = c.p.Min; g.cars = cars(c.p);
+    const dc = signDestCode(c.p, g);                    // sign's destination wins
+    if (dc && dc !== g.destCode){
+      const k = g.after.indexOf(dc);
+      if (k >= 0) g.after = g.after.slice(0, k + 1);
+      g.destCode = dc; g.dest = stationName(dc) || signDest(c.p);
     }
+    groupSide[c.p.LocationCode + "|" + c.p.Group] = g.side;
   }
-  for (const c of predList){
-    if (c.used) continue;
-    const p = c.p;
-    out.push({ st: p.LocationCode, line: p.Line, sort: c.m, minText: p.Min, destCode: p.DestinationCode || "",
-               dest: p.DestinationName || p.Destination, side: groupSide[p.LocationCode + "|" + p.Group] || p.LocationCode + "|" + p.Group,
-               after: [], cars: /^\d+$/.test(p.Car) ? p.Car : "", est: false });
-  }
+
+  // 3. Sign trains with no partner still count. Place them on a track via a matched train on the
+  //    same sign group, or a long-range train heading through the same destination.
+  const signOnly = signs.filter(c => !c.used).map(({ p, m }) => {
+    const via = lr.find(g => g.st === p.LocationCode && g.line === p.Line && sameDirection(p, g));
+    return { st: p.LocationCode, line: p.Line, sort: m, minText: p.Min, destCode: p.DestinationCode || (via ? signDestCode(p, via) : ""),
+             dest: signDest(p), side: groupSide[p.LocationCode + "|" + p.Group] || (via && via.side) || p.LocationCode + "|" + p.Group,
+             after: [], cars: cars(p), est: false };
+  });
+
+  // 4. Drop long-range trains the sign contradicts: on a track the sign covers, anything earlier than
+  //    the sign's last train should be on the sign. If it isn't, the sign knows better.
+  const reach = {};
+  for (const t of [...lr.filter(g => g.matched), ...signOnly]) if (t.sort < 90) reach[t.side] = Math.max(reach[t.side] ?? -1, t.sort);
+  for (const g of lr) if (!g.matched && !(g.side in reach && g.sort < reach[g.side] - 1)) out.push(g);
+  out.push(...lr.filter(g => g.matched), ...signOnly);
   return out.sort((a,b) => a.sort - b.sort);
 }
 
