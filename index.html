@@ -17,6 +17,7 @@
 :root{
   --bg:#eef0ee; --panel:#ffffff; --line:#d9ddd9; --fg:#1b1f1e; --muted:#66706c;
   --amber:#3d2b25; --accent:#3d2b25; --danger:#b3261e; --live:#b4540a; --hi:#f6f3ea;
+  --est:#4f6a8f;
   --warn-bg:#fdf1e1; --warn-line:#efc98f; --warn-fg:#6b3a06;
   --RD:#BF0D3E; --OR:#ED8B00; --BL:#009CDE; --YL:#FFD100; --GR:#00B140; --SV:#919D9D;
   --sans:"Overpass",-apple-system,"Helvetica Neue",Arial,sans-serif;
@@ -66,8 +67,14 @@ main{display:flex;flex-direction:column;gap:14px;padding-top:14px}
 .cars{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .min{font-family:var(--mono);color:var(--fg);font-size:18px;text-align:right;font-variant-numeric:tabular-nums}
 .min.arr{color:var(--live)}
-.row.est .dest,.row.est .min{color:var(--muted);font-weight:400}
+.row.est .dest,.row.est .cars{color:var(--muted);font-weight:400}
+.row.est .min{color:var(--est);font-style:italic;font-weight:400}
+.row.est .min::before{content:"~"}
 .row.est .badge{opacity:.55}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 14px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
+.legend span{display:flex;align-items:baseline;gap:6px}
+.legend .lv{font-family:var(--mono);font-size:15px;color:var(--fg);font-weight:600}
+.legend .es{font-family:var(--mono);font-size:15px;color:var(--est);font-style:italic}
 .min small{font-size:11px;margin-left:2px}
 .empty,.msg{color:var(--muted);font-size:14px;padding:10px 14px 14px;line-height:1.4}
 .msg.err{color:var(--danger)}
@@ -281,7 +288,7 @@ function rowHTML(t){
     ${minHTML(t.minText)}</div>`;
 }
 const estNote = list => list.some(t => t.est)
-  ? `<div class="msg">Gray times come from WMATA's longer-range feed, beyond what the station sign shows.</div>` : "";
+  ? `<div class="legend"><span><b class="lv">5</b>live, from WMATA's station signs</span><span><i class="es">~5</i>estimate, beyond the sign</span></div>` : "";
 
 // ----- GTFS-Realtime (protobuf) decoder: just the fields we need -----
 function pbFields(b, start=0, end=b.length){
